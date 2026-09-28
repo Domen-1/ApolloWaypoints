@@ -1,0 +1,16 @@
+{
+	"schemaVersion": 1,
+	"id": "apollowaypoints-test",
+	"version": "1.0.0",
+	"name": "Apollo Waypoints client tests",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"com.domen.apollowaypoints.test.ApolloClientGameTest"
+		]
+	},
+	"depends": {
+		"apollowaypoints": "*",
+		"xaerominimap": "*"
+	}
+}

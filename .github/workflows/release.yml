@@ -1,0 +1,31 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - run: chmod +x ./gradlew
+      - run: ./gradlew build
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mod=$(grep '^mod_version=' gradle.properties | cut -d= -f2)
+          mc=$(grep '^minecraft_version=' gradle.properties | cut -d= -f2)
+          jar=$(find build/libs -name '*.jar' ! -name '*-sources.jar')
+          gh release create "$GITHUB_REF_NAME" $jar \
+            --title "Apollo Waypoints $mod для Minecraft $mc" \
+            --notes "Общие вейпоинты сервера Apollo-tech. Один jar и для сервера, и для игроков. Нужен Fabric API под $mc; чтобы видеть точки на карте, игрокам нужен Xaero's Minimap."

@@ -1,0 +1,31 @@
+{
+	"schemaVersion": 1,
+	"id": "apollowaypoints",
+	"version": "${version}",
+	"name": "Apollo Waypoints",
+	"description": "Shared waypoints for Apollo-tech: stored on the server and shown live in Xaero's Minimap and World Map.",
+	"authors": [
+		"domen"
+	],
+	"license": "CC0-1.0",
+	"icon": "assets/apollowaypoints/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.domen.apollowaypoints.ApolloWaypoints"
+		],
+		"client": [
+			"com.domen.apollowaypoints.client.ApolloWaypointsClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"xaerominimap": "*",
+		"xaeroworldmap": "*"
+	}
+}
