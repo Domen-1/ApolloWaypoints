@@ -4,6 +4,7 @@ import com.domen.apollowaypoints.ApolloWaypoints;
 import com.domen.apollowaypoints.model.WaypointDraft;
 import net.fabricmc.loader.api.FabricLoader;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -26,8 +27,11 @@ public interface XaeroBridge {
 	/** Remove our waypoints from Xaero, e.g. when leaving the server. */
 	void clear();
 
-	/** Hide a waypoint for this player only, the same flag Xaero's own "delete" sets on third-party waypoints. */
-	void setHidden(int waypointId, boolean hidden);
+	/**
+	 * Switch waypoints off or on for this player only. It is Xaero's own "disabled" flag: the waypoints are not drawn,
+	 * stay greyed out in Xaero's list and can be switched back there or on World Map.
+	 */
+	void setHidden(Collection<Integer> waypointIds, boolean hidden);
 
 	/** Copies the server waypoints into a regular Xaero set in every dimension and saves it. Returns a message. */
 	String exportToSet(String setName);
@@ -54,7 +58,7 @@ public interface XaeroBridge {
 		}
 
 		@Override
-		public void setHidden(int waypointId, boolean hidden) {
+		public void setHidden(Collection<Integer> waypointIds, boolean hidden) {
 		}
 
 		@Override

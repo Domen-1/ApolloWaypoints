@@ -1,6 +1,7 @@
 package com.domen.apollowaypoints.test;
 
 import com.domen.apollowaypoints.client.ApolloWaypointsClient;
+import com.domen.apollowaypoints.client.ClientSettings;
 import com.domen.apollowaypoints.client.ClientState;
 import com.domen.apollowaypoints.client.Requests;
 import com.domen.apollowaypoints.client.gui.EditScreen;
@@ -30,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * End-to-end check in a real client with Xaero's Minimap: waypoints added on the (integrated) server show up in Xaero's
- * third-party layer, disappear live, can be hidden and copied into a set. Screenshots go to build/run/clientGameTest/screenshots.
+ * third-party layer, disappear live, can be switched off and copied into a set. Screenshots go to build/run/clientGameTest/screenshots.
  */
 public class ApolloClientGameTest implements FabricClientGameTest {
 	private static final Logger LOG = LoggerFactory.getLogger("apollowaypoints-test");
@@ -44,16 +45,23 @@ public class ApolloClientGameTest implements FabricClientGameTest {
 
 	/**
 	 * A real network connection to a dedicated server where the player is not an operator: sync on join, the Xaero
-	 * "Share" message in chat turning into a server waypoint, client requests, and the teleport rule for spectators.
+	 * "Share" message in chat turning into a server waypoint, client requests, the teleport rule for spectators, and
+	 * waypoints switched off in Xaero staying off after a rejoin.
 	 */
 	private static void dedicatedServer(ClientGameTestContext context) {
-		List<Component> received = new CopyOnWriteArrayList<>();
-		ClientReceiveMessageEvents.GAME.register((message, overlay) -> received.add(message));
 		Properties properties = new Properties();
 		properties.setProperty("level-type", "minecraft:flat");
 		properties.setProperty("enforce-secure-profile", "false");
-		try (TestDedicatedServerContext server = context.worldBuilder().createServer(properties);
-			 TestDedicatedServerConnection connection = server.connect()) {
+		try (TestDedicatedServerContext server = context.worldBuilder().createServer(properties)) {
+			firstJoin(context, server);
+			rejoin(context, server);
+		}
+	}
+
+	private static void firstJoin(ClientGameTestContext context, TestDedicatedServerContext server) {
+		List<Component> received = new CopyOnWriteArrayList<>();
+		ClientReceiveMessageEvents.GAME.register((message, overlay) -> received.add(message));
+		try (TestDedicatedServerConnection connection = server.connect()) {
 			connection.waitForChunksRender();
 			context.waitFor(mc -> ClientState.isSynced(), 200);
 			check(true, "synced with a dedicated server over the network");
@@ -106,6 +114,39 @@ public class ApolloClientGameTest implements FabricClientGameTest {
 			context.waitTicks(10);
 			check(received.stream().noneMatch(c -> c.getString().startsWith("Строка выше")), "server detected Xaero on the client");
 			context.takeScreenshot("apollo-0-dedicated");
+
+			// Switched off in Xaero itself: its waypoint screen writes Xaero's per-id override, World Map flips the
+			// waypoint's own flag. Both used to be lost on the next change on the server and on rejoin.
+			int shared = find("Точка из чата").id();
+			context.runOnClient(mc -> XaeroProbe.disableLikeWaypointScreen(shared));
+			context.runOnClient(mc -> XaeroProbe.toggleLikeWorldMap(id));
+			context.waitFor(mc -> ClientSettings.isHidden(shared) && ClientSettings.isHidden(id), 100);
+			check(true, "switches in Xaero's waypoint screen and on World Map are remembered");
+			server.runCommand("wp set " + id + " color gold");
+			context.waitFor(mc -> ClientState.get(id).color() == 6, 100);
+			context.waitTicks(10);
+			checkHidden(context, true, "still off after a change on the server");
+		}
+	}
+
+	/** As after a server restart: the waypoints switched off in Xaero are still off, and can be switched on all at once. */
+	private static void rejoin(ClientGameTestContext context, TestDedicatedServerContext server) {
+		try (TestDedicatedServerConnection connection = server.connect()) {
+			connection.waitForChunksRender();
+			context.waitFor(mc -> ClientState.isSynced(), 200);
+			awaitXaero(context, 2);
+			checkHidden(context, true, "still off after rejoining");
+			List<Integer> ids = context.computeOnClient(mc -> ClientState.waypoints().stream().map(Waypoint::id).toList());
+			context.runOnClient(mc -> ApolloWaypointsClient.xaero().setHidden(ids, false));
+			checkHidden(context, false, "all switched on at once");
+		}
+	}
+
+	private static void checkHidden(ClientGameTestContext context, boolean hidden, String what) {
+		for (String name : List.of("Точка из чата", "Из экрана")) {
+			Boolean inXaero = context.computeOnClient(mc -> XaeroProbe.isHidden(find(name).id()));
+			Boolean saved = context.computeOnClient(mc -> ClientSettings.isHidden(find(name).id()));
+			check(Boolean.valueOf(hidden).equals(inXaero) && saved == hidden, name + ": " + what);
 		}
 	}
 
@@ -160,13 +201,12 @@ public class ApolloClientGameTest implements FabricClientGameTest {
 			world.getServer().runCommand("wp set 1 color red");
 			context.waitFor(mc -> ClientState.get(1).color() == 12, 100);
 
-			// Hide for this player only, survives the next resync.
-			context.runOnClient(mc -> ApolloWaypointsClient.xaero().setHidden(1, true));
-			check(Boolean.TRUE.equals(context.computeOnClient(mc -> XaeroProbe.isHidden(1))), "waypoint 1 hidden in Xaero");
+			// Switch off for this player only from the mod's screen, survives the next resync.
+			context.runOnClient(mc -> ApolloWaypointsClient.xaero().setHidden(List.of(1), true));
+			check(Boolean.TRUE.equals(context.computeOnClient(mc -> XaeroProbe.isHidden(1))), "waypoint 1 off in Xaero");
 			world.getServer().runCommand("wp set 2 color gold");
 			context.waitTicks(10);
-			check(Boolean.TRUE.equals(context.computeOnClient(mc -> XaeroProbe.isHidden(1))), "still hidden after a resync");
-			context.runOnClient(mc -> ApolloWaypointsClient.xaero().setHidden(1, false));
+			check(Boolean.TRUE.equals(context.computeOnClient(mc -> XaeroProbe.isHidden(1))), "still off after a resync");
 
 			String exported = context.computeOnClient(mc -> ApolloWaypointsClient.xaero().exportToSet("Apollo"));
 			LOG.info("Export: {}", exported);
@@ -175,6 +215,7 @@ public class ApolloClientGameTest implements FabricClientGameTest {
 			context.setScreen(WaypointsScreen::new);
 			context.waitTicks(5);
 			context.takeScreenshot("apollo-2-list");
+			context.runOnClient(mc -> ApolloWaypointsClient.xaero().setHidden(List.of(1), false));
 			context.setScreen(() -> new EditScreen(null, null));
 			context.waitTicks(5);
 			context.takeScreenshot("apollo-3-edit");

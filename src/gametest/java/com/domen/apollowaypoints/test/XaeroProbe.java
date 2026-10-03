@@ -5,6 +5,7 @@ import xaero.common.minimap.waypoints.Waypoint;
 import xaero.hud.minimap.BuiltInHudModules;
 import xaero.hud.minimap.module.MinimapSession;
 import xaero.hud.minimap.waypoint.WaypointCollector;
+import xaero.hud.minimap.waypoint.WaypointRenderInfo;
 import xaero.hud.minimap.waypoint.set.WaypointSet;
 import xaero.hud.minimap.waypoint.thirdparty.ThirdPartyWaypoints;
 import xaero.hud.minimap.world.MinimapWorld;
@@ -48,7 +49,7 @@ final class XaeroProbe {
 		return counts == null ? -1 : counts.values().stream().mapToInt(Integer::intValue).sum();
 	}
 
-	static Boolean isHidden(int id) {
+	private static Waypoint find(int id) {
 		MinimapWorldRootContainer root = root();
 		if (root == null) {
 			return null;
@@ -57,11 +58,33 @@ final class XaeroProbe {
 			for (ThirdPartyWaypoints group : container.getThirdPartyWaypointManager().getAll()) {
 				Waypoint w = group.get(String.valueOf(id));
 				if (group.getOriginId().getNamespace().equals(ApolloWaypoints.MOD_ID) && w != null) {
-					return w.isThirdPartyDeleted();
+					return w;
 				}
 			}
 		}
 		return null;
+	}
+
+	/** Switched off for this player: Xaero's "disabled", which its renderers skip. */
+	static Boolean isHidden(int id) {
+		Waypoint w = find(id);
+		return w == null ? null : w.isDisabled();
+	}
+
+	/** What the "Disable" button of Xaero's waypoint screen does to a third-party waypoint (GuiWaypoints.setDisabled). */
+	static void disableLikeWaypointScreen(int id) {
+		Waypoint w = find(id);
+		WaypointRenderInfo dest = w.getRenderInfoEditDest();
+		dest.setDisabled(true);
+		dest.nullEverythingMatching(w);
+		MinimapWorldRootContainer root = root();
+		root.getSession().getWorldManagerIO().getRootConfigIO().save(root);
+	}
+
+	/** What "Disable" in World Map's right-click menu does (SupportXaeroMinimap.disableWaypoint): flips the waypoint's own flag. */
+	static void toggleLikeWorldMap(int id) {
+		Waypoint w = find(id);
+		w.setDisabled(!w.isDisabled());
 	}
 
 	/** What Xaero's own collector hands to its renderers in the current dimension: our waypoints among them. */

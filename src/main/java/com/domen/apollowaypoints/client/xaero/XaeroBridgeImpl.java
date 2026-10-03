@@ -20,6 +20,7 @@ import xaero.hud.minimap.BuiltInHudModules;
 import xaero.hud.minimap.module.MinimapSession;
 import xaero.hud.minimap.waypoint.WaypointColor;
 import xaero.hud.minimap.waypoint.WaypointPurpose;
+import xaero.hud.minimap.waypoint.WaypointRenderInfo;
 import xaero.hud.minimap.waypoint.WaypointVisibilityType;
 import xaero.hud.minimap.waypoint.set.WaypointSet;
 import xaero.hud.minimap.waypoint.thirdparty.ThirdPartyWaypoints;
@@ -29,6 +30,7 @@ import xaero.hud.minimap.world.container.MinimapWorldRootContainer;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,6 +97,8 @@ public final class XaeroBridgeImpl implements XaeroBridge {
 			try {
 				MinimapWorldRootContainer root = root();
 				if (root != null) {
+					// A click in Xaero made right before leaving is not lost.
+					captureHidden(root);
 					ourGroups(root).forEach(ThirdPartyWaypoints::clear);
 				}
 			} catch (LinkageError | RuntimeException e) {
@@ -106,8 +110,8 @@ public final class XaeroBridgeImpl implements XaeroBridge {
 	}
 
 	@Override
-	public void setHidden(int waypointId, boolean hidden) {
-		ClientSettings.setHidden(waypointId, hidden);
+	public void setHidden(Collection<Integer> waypointIds, boolean hidden) {
+		ClientSettings.setHidden(waypointIds, hidden);
 		if (broken) {
 			return;
 		}
@@ -116,11 +120,17 @@ public final class XaeroBridgeImpl implements XaeroBridge {
 			if (root == null) {
 				return;
 			}
+			boolean overridesChanged = false;
 			for (ThirdPartyWaypoints group : ourGroups(root)) {
-				xaero.common.minimap.waypoints.Waypoint xw = group.get(String.valueOf(waypointId));
-				if (xw != null) {
-					xw.setThirdPartyDeleted(hidden);
+				for (int id : waypointIds) {
+					xaero.common.minimap.waypoints.Waypoint xw = group.get(String.valueOf(id));
+					if (xw != null) {
+						overridesChanged |= setOff(xw, hidden);
+					}
 				}
+			}
+			if (overridesChanged) {
+				saveXaeroConfig(root);
 			}
 		} catch (LinkageError | RuntimeException e) {
 			fail(e);
@@ -234,15 +244,51 @@ public final class XaeroBridgeImpl implements XaeroBridge {
 	private void sync(MinimapWorldRootContainer root) {
 		MinimapSession session = root.getSession();
 		ourGroups(root).forEach(ThirdPartyWaypoints::clear);
+		List<Integer> off = new ArrayList<>();
+		List<Integer> on = new ArrayList<>();
+		boolean overridesChanged = false;
 		for (Waypoint w : ClientState.waypoints()) {
 			MinimapWorldContainer container = container(root, session, w.dimension());
 			if (container == null) {
 				continue;
 			}
 			xaero.common.minimap.waypoints.Waypoint xw = toXaero(w);
+			// add() attaches the render override Xaero keeps per id and reads from its config; setting flags earlier throws.
 			group(container, w.category()).add(String.valueOf(w.id()), xw);
-			// The "deleted" flag lives in the render override that add() attaches; setting it earlier throws.
-			xw.setThirdPartyDeleted(ClientSettings.isHidden(w.id()));
+			// Within a session captureHidden() has already emptied the override, so a "disabled" in it was loaded from
+			// Xaero's config: a click in Xaero's waypoint screen we did not see, e.g. the game closed right after it.
+			// Its "deleted" is not trusted: 0.1.0 set it from our settings without saving that config.
+			Boolean clicked = xw.getThirdPartyRenderOverride().getDisabled();
+			boolean hidden = clicked != null ? clicked : ClientSettings.isHidden(w.id());
+			(hidden ? off : on).add(w.id());
+			overridesChanged |= setOff(xw, hidden);
+		}
+		ClientSettings.setHidden(off, true);
+		ClientSettings.setHidden(on, false);
+		if (overridesChanged) {
+			saveXaeroConfig(root);
+		}
+	}
+
+	/**
+	 * "Off for me" is Xaero's "disabled" flag on the waypoint itself. Xaero's waypoint screen writes it into the per-id
+	 * override, and World Map flips the waypoint's own flag, which a set override would mask. So the override is
+	 * emptied, and both keep working. Xaero's "delete" becomes "off" too: a server waypoint cannot be deleted locally.
+	 * Returns whether the override had something set, i.e. the copy in Xaero's config is now out of date.
+	 */
+	private static boolean setOff(xaero.common.minimap.waypoints.Waypoint xw, boolean off) {
+		WaypointRenderInfo override = xw.getThirdPartyRenderOverride();
+		boolean changed = override.getDisabled() != null || override.isThirdPartyDeleted();
+		override.setDisabled(null);
+		override.setThirdPartyDeleted(false);
+		xw.setDisabled(off);
+		return changed;
+	}
+
+	/** Saves Xaero's per-server config, where it keeps the overrides, as its own screens do; never before it was read. */
+	private static void saveXaeroConfig(MinimapWorldRootContainer root) {
+		if (root.getConfig().isLoaded()) {
+			root.getSession().getWorldManagerIO().getRootConfigIO().save(root);
 		}
 	}
 
@@ -276,12 +322,29 @@ public final class XaeroBridgeImpl implements XaeroBridge {
 		return groups;
 	}
 
-	/** Picks up waypoints hidden or restored in Xaero's own waypoint screen, so the choice survives a rejoin. */
+	/**
+	 * Picks up waypoints switched off or on in Xaero's waypoint screen or on World Map. Xaero's flags live on objects
+	 * that sync() rebuilds, so without this the choice is lost on the next change on the server or on rejoin.
+	 */
 	private static void captureHidden(MinimapWorldRootContainer root) {
+		if (ClientState.serverId() == null) {
+			return;
+		}
+		List<Integer> off = new ArrayList<>();
+		List<Integer> on = new ArrayList<>();
+		boolean overridesChanged = false;
 		for (ThirdPartyWaypoints group : ourGroups(root)) {
 			for (Map.Entry<String, xaero.common.minimap.waypoints.Waypoint> e : group.getWaypoints().entrySet()) {
-				ClientSettings.setHidden(Integer.parseInt(e.getKey()), e.getValue().isThirdPartyDeleted());
+				xaero.common.minimap.waypoints.Waypoint xw = e.getValue();
+				boolean hidden = xw.isDisabled() || xw.isThirdPartyDeleted();
+				(hidden ? off : on).add(Integer.parseInt(e.getKey()));
+				overridesChanged |= setOff(xw, hidden);
 			}
+		}
+		ClientSettings.setHidden(off, true);
+		ClientSettings.setHidden(on, false);
+		if (overridesChanged) {
+			saveXaeroConfig(root);
 		}
 	}
 

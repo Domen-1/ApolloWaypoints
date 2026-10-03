@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -20,8 +21,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Per-player preferences in {@code config/apollowaypoints-client.json}. Hidden waypoints and categories are stored per
- * server (by the server's waypoint database id), because waypoint numbers only mean something on their server.
+ * Per-player preferences in {@code config/apollowaypoints-client.json}. Waypoints switched off ("hidden") and hidden
+ * categories are stored per server (by the server's waypoint database id), because waypoint numbers only mean something
+ * on their server.
  */
 public final class ClientSettings {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -110,11 +112,12 @@ public final class ClientSettings {
 		return prefs().hidden.contains(waypointId);
 	}
 
-	public static void setHidden(int waypointId, boolean hidden) {
-		if (ClientState.serverId() == null) {
+	/** Writes the file once, however many waypoints change. */
+	public static void setHidden(Collection<Integer> waypointIds, boolean hidden) {
+		if (ClientState.serverId() == null || waypointIds.isEmpty()) {
 			return;
 		}
-		if (hidden ? prefs().hidden.add(waypointId) : prefs().hidden.remove(waypointId)) {
+		if (hidden ? prefs().hidden.addAll(waypointIds) : prefs().hidden.removeAll(waypointIds)) {
 			save();
 		}
 	}

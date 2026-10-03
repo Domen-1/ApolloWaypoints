@@ -98,7 +98,7 @@ final class WaypointList extends ObjectSelectionList<WaypointList.Entry> {
 			Category category = ClientState.category(waypoint.category());
 			String info = waypoint.coordinates() + " · " + Dimensions.displayName(waypoint.dimension())
 				+ " · " + (category == null ? waypoint.category() : category.name())
-				+ (hidden ? " · скрыта" : "")
+				+ (hidden ? " · выключена" : "")
 				+ (waypoint.description().isEmpty() ? "" : " · " + waypoint.description());
 			g.text(font, font.plainSubstrByWidth(info, right - (x + 12)), x + 12, y + 12, Ui.GRAY);
 		}

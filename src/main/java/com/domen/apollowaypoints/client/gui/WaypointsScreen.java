@@ -22,7 +22,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
-/** The mod's main screen (key J or /wpgui): every server waypoint, with add, edit, remove, teleport and hide. */
+/** The mod's main screen (key J or /wpgui): every server waypoint, with add, edit, remove, teleport and switching off. */
 public class WaypointsScreen extends Screen {
 	private static final String EXPORT_SET = "Apollo";
 
@@ -57,8 +57,10 @@ public class WaypointsScreen extends Screen {
 	private Button removeButton;
 	private Button teleportButton;
 	private Button hideButton;
+	private Button hideAllButton;
 	private Button importButton;
 	private Button exportButton;
+	private List<Waypoint> shown = List.of();
 	private int listTop;
 	private int seenVersion = -1;
 	private boolean confirmRemove;
@@ -116,21 +118,24 @@ public class WaypointsScreen extends Screen {
 		editButton = button("Изменить", left + (fifth + gap), row1, fifth, b -> openEditor(list.selected()));
 		removeButton = button("Удалить", left + 2 * (fifth + gap), row1, fifth, b -> remove());
 		teleportButton = button("Телепорт", left + 3 * (fifth + gap), row1, fifth, b -> teleport());
-		hideButton = button("Скрыть", left + 4 * (fifth + gap), row1, fifth, b -> toggleHidden());
-		hideButton.setTooltip(Tooltip.create(Component.literal("Скрыть точку на карте только для себя")));
+		hideButton = button("Выключить", left + 4 * (fifth + gap), row1, fifth, b -> toggleHidden());
+		hideButton.setTooltip(Tooltip.create(Component.literal("Только у тебя: точка не рисуется на карте, в списке Xaero она серая. "
+			+ "Включать и выключать можно и в самом Xaero")));
 
-		int quarter = (rowWidth - 3 * gap) / 4;
 		int row2 = height - 26;
-		importButton = button("Из Xaero…", left, row2, quarter, b -> minecraft.gui.setScreen(new XaeroImportScreen(this)));
+		importButton = button("Из Xaero…", left, row2, fifth, b -> minecraft.gui.setScreen(new XaeroImportScreen(this)));
 		importButton.setTooltip(Tooltip.create(Component.literal("Отправить на сервер точки из своих наборов Xaero")));
-		exportButton = button("В набор Xaero", left + (quarter + gap), row2, quarter, b -> exportToSet());
+		exportButton = button("В набор Xaero", left + (fifth + gap), row2, fifth, b -> exportToSet());
 		exportButton.setTooltip(Tooltip.create(Component.literal("Скопировать серверные точки в обычный набор Xaero «" + EXPORT_SET
 			+ "» — останутся у тебя и без сервера. Содержимое этого набора заменяется.")));
-		button(toastsLabel(), left + 2 * (quarter + gap), row2, quarter, b -> {
+		hideAllButton = button("Выключить все", left + 2 * (fifth + gap), row2, fifth, b -> toggleAllHidden());
+		hideAllButton.setTooltip(Tooltip.create(Component.literal("Все точки из списка выше, с учётом поиска и фильтров. "
+			+ "Только у тебя: на сервере и у других игроков ничего не меняется")));
+		button(toastsLabel(), left + 3 * (fifth + gap), row2, fifth, b -> {
 			ClientSettings.setToasts(!ClientSettings.toasts());
 			b.setMessage(Component.literal(toastsLabel()));
 		}).setTooltip(Tooltip.create(Component.literal("Всплывающее уведомление, когда кто-то добавляет точку")));
-		button("Готово", left + 3 * (quarter + gap), row2, quarter, b -> onClose());
+		button("Готово", left + 4 * (fifth + gap), row2, fifth, b -> onClose());
 
 		rebuild();
 	}
@@ -177,7 +182,7 @@ public class WaypointsScreen extends Screen {
 		String here = minecraft.level == null ? "" : minecraft.level.dimension().identifier().toString();
 		Vec3 position = minecraft.player == null ? null : minecraft.player.position();
 		String query = search.trim().toLowerCase(Locale.ROOT);
-		List<Waypoint> shown = ClientState.waypoints().stream()
+		shown = ClientState.waypoints().stream()
 			.filter(w -> where.matches(w.dimension(), here))
 			.filter(w -> categoryFilter.isEmpty() || w.category().equals(categoryFilter))
 			.filter(w -> query.isEmpty() || matches(w, query))
@@ -205,7 +210,9 @@ public class WaypointsScreen extends Screen {
 		removeButton.active = w != null && ClientState.canRemove(w);
 		teleportButton.active = w != null && ClientState.canTeleportNow();
 		hideButton.active = w != null && xaero;
-		hideButton.setMessage(Component.literal(w != null && ClientSettings.isHidden(w.id()) ? "Показать" : "Скрыть"));
+		hideButton.setMessage(Component.literal(w != null && ClientSettings.isHidden(w.id()) ? "Включить" : "Выключить"));
+		hideAllButton.active = xaero && !shown.isEmpty();
+		hideAllButton.setMessage(Component.literal(allHidden() ? "Включить все" : "Выключить все"));
 		importButton.active = xaero && ClientState.can(PermissionFlags.ADD);
 		exportButton.active = xaero && !ClientState.waypoints().isEmpty();
 		if (!confirmRemove) {
@@ -259,9 +266,19 @@ public class WaypointsScreen extends Screen {
 	private void toggleHidden() {
 		Waypoint w = list.selected();
 		if (w != null) {
-			ApolloWaypointsClient.xaero().setHidden(w.id(), !ClientSettings.isHidden(w.id()));
+			ApolloWaypointsClient.xaero().setHidden(List.of(w.id()), !ClientSettings.isHidden(w.id()));
 			rebuild();
 		}
+	}
+
+	/** Like Xaero's own button: if every listed waypoint is off, switch them all on, otherwise all off. */
+	private void toggleAllHidden() {
+		ApolloWaypointsClient.xaero().setHidden(shown.stream().map(Waypoint::id).toList(), !allHidden());
+		rebuild();
+	}
+
+	private boolean allHidden() {
+		return !shown.isEmpty() && shown.stream().allMatch(w -> ClientSettings.isHidden(w.id()));
 	}
 
 	private void exportToSet() {
